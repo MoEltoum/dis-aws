@@ -10,8 +10,8 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /opt/ml/code
 
 # Copy the current directory contents into the container at /opt/ml/code
-COPY . /opt/ml/code
-
+#COPY . /opt/ml/code
+COPY code/train.py /opt/ml/code/train.py
 # Install any needed packages specified in requirements.txt
 RUN pip --no-cache-dir install --upgrade pip
 
@@ -19,7 +19,7 @@ COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Define environment variable
-ENV SAGEMAKER_PROGRAM train.py
+#ENV SAGEMAKER_PROGRAM train.py
 
 # Run train_segmentation.py when the container launches
 ENTRYPOINT ["python", "train.py"]
