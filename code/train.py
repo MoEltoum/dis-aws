@@ -1,62 +1,126 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
-from torchvision import transforms
-from torch.utils.data import DataLoader
-from torchvision.datasets import Camvid
+from utils import *
+import argparse
 
-# Define a simple U-Net model for segmentation
-class UNet(nn.Module):
-    def __init__(self):
-        super(UNet, self).__init__()
 
-        # Encoder
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)
-        )
+def main(train_dir,
+         val_dir,
+         hypar):
+    # --- Step 0: Build datasets ---
+    train_datasets, valid_datasets = create_inputs(train_dir, val_dir)
 
-        # Decoder
-        self.decoder = nn.Sequential(
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(128, 128, kernel_size=3, padding=1),
-            nn.ReLU(inplace=True),
-            nn.ConvTranspose2d(128, 64, kernel_size=2, stride=2)
-        )
+    # --- Step 1: Build dataloaders ---
+    print("--- create training dataloader ---")
+    # collect training dataset
+    train_nm_im_gt_list = get_im_gt_name_dict(train_datasets, flag="train")
+    # build dataloader for training datasets
+    train_dataloaders, train_datasets = create_dataloaders(train_nm_im_gt_list,
+                                                           cache_size=hypar ["cache_size"],
+                                                           cache_boost=hypar ["cache_boost_train"],
+                                                           my_transforms=[
+                                                               GOSRandomHFlip(),
+                                                               GOSNormalize([0.5, 0.5, 0.5], [1.0, 1.0, 1.0]),
+                                                           ],
+                                                           batch_size=hypar ["batch_size_train"],
+                                                           shuffle=True)
+    train_dataloaders_val, train_datasets_val = create_dataloaders(train_nm_im_gt_list,
+                                                                   cache_size=hypar ["cache_size"],
+                                                                   cache_boost=hypar ["cache_boost_train"],
+                                                                   my_transforms=[
+                                                                       GOSNormalize([0.5, 0.5, 0.5],
+                                                                                    [1.0, 1.0, 1.0]),
+                                                                   ],
+                                                                   batch_size=hypar ["batch_size_valid"],
+                                                                   shuffle=False)
+    print(len(train_dataloaders), " train dataloaders created")
 
-        # Final convolutional layer
-        self.final_conv = nn.Conv2d(64, 12, kernel_size=1)
+    print("--- create valid dataloader ---")
+    # build dataloader for validation or testing
+    valid_nm_im_gt_list = get_im_gt_name_dict(valid_datasets, flag="valid")
+    # build dataloader for training datasets
+    valid_dataloaders, valid_datasets = create_dataloaders(valid_nm_im_gt_list,
+                                                           cache_size=hypar ["cache_size"],
+                                                           cache_boost=hypar ["cache_boost_valid"],
+                                                           my_transforms=[
+                                                               GOSNormalize([0.5, 0.5, 0.5], [1.0, 1.0, 1.0]),
+                                                               # GOSResize(hypar["input_size"])
+                                                           ],
+                                                           batch_size=hypar ["batch_size_valid"],
+                                                           shuffle=False)
+    print(len(valid_dataloaders), " valid dataloaders created")
 
-    def forward(self, x):
-        x = self.encoder(x)
-        x = self.decoder(x)
-        x = self.final_conv(x)
-        return x
+    # --- Step 2: Build Model and Optimizer ---
+    print("--- build model ---")
+    net = hypar ["model"]
 
-# Load the dataset
-transform = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))])
-train_dataset = Camvid(root='./data', download=True, transform=transform)
-train_loader = DataLoader(train_dataset, batch_size=4, shuffle=True)
+    # convert to half precision
+    if (hypar ["model_digit"] == "half"):
+        net.half()
+        for layer in net.modules():
+            if isinstance(layer, nn.BatchNorm2d):
+                layer.float()
 
-# Initialize the model, loss function, and optimizer
-model = UNet()
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+    if torch.cuda.is_available():
+        net.cuda()
 
-# Training loop
-epochs = 5
-for epoch in range(epochs):
-    for data in train_loader:
-        inputs, targets = data
-        optimizer.zero_grad()
-        outputs = model(inputs)
-        loss = criterion(outputs, targets)
-        loss.backward()
-        optimizer.step()
+    if (hypar ["restore_model"] != ""):
+        print("restore model from:")
+        print(hypar ["model_path"] + "/" + hypar ["restore_model"])
+        if torch.cuda.is_available():
+            net.load_state_dict(torch.load(hypar ["model_path"] + "/" + hypar ["restore_model"]))
+        else:
+            net.load_state_dict(torch.load(hypar ["model_path"] + "/" + hypar ["restore_model"], map_location="cpu"))
 
-# Save the trained model
-torch.save(model.state_dict(), '/opt/ml/model/model.pth')
+    print("--- define optimizer ---")
+    optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
+
+    # --- Step 3: checking outputs directory ---
+    # outputs_dir()
+
+    # --- Step 4: Train and Valid Model ---
+
+    train(net,
+          optimizer,
+          train_dataloaders,
+          train_datasets,
+          valid_dataloaders,
+          valid_datasets,
+          hypar,
+          train_dataloaders_val, train_datasets_val)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+
+    default_hyper = {"interm_sup": False,
+                     "valid_out_dir": "",
+                     "model_path": "/home/aos-mo/Documents/ML_models/dis_2/outputs/saved_weights",
+                     "restore_model": "",
+                     "start_ite": 0,
+                     "gt_encoder_model": "",
+                     "model_digit": "full",
+                     "seed": 0,
+                     "cache_size": [612, 612],
+                     "cache_boost_train": False,
+                     "cache_boost_valid": False,
+                     "input_size": [612, 612],
+                     "crop_size": [612, 612],
+                     "random_flip_h": 1,
+                     "random_flip_v": 0,
+                     "model": ISNetDIS(),
+                     "early_stop": 2,
+                     "model_save_fre": 100,
+                     "batch_size_train": 1,
+                     "batch_size_valid": 1,
+                     "max_ite": 100,
+                     "max_epoch_num": 10
+                     }
+
+    parser.add_argument('--train_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/train')
+    parser.add_argument('--val_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/val')
+    parser.add_argument('--hyperparams', default=default_hyper)
+
+    args, _ = parser.parse_known_args()
+
+    main(args.train_inputs,
+         args.val_inputs,
+         args.hyperparams)
