@@ -2,6 +2,7 @@ import gc
 import os
 import time
 from pathlib import Path
+import boto3
 import logging
 from csv_logger import CsvLogger
 import numpy as np
@@ -19,8 +20,10 @@ from models.isnet import *
 # device = 'cuda' if torch.cuda.is_available() else 'cpu'
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-
-# --------------- 1: Model Utils ---------------
+# define model local
+cwd = os.getcwd()
+Path(os.path.sep.join([cwd, "weights"])).mkdir(parents=True, exist_ok=True)
+weights_path = os.path.join(cwd, 'weights')
 
 
 def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, hypar, train_dataloaders_val,
@@ -33,7 +36,7 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
     net = ISNetGTEncoder()
     # load the existing model gt encoder
     if (hypar ["gt_encoder_model"] != ""):
-        model_path = hypar ["model_path"] + "/" + hypar ["gt_encoder_model"]
+        model_path = weights_path + "/" + hypar ["gt_encoder_model"]
         if torch.cuda.is_available():
             net.load_state_dict(torch.load(model_path))
             net.cuda()
@@ -48,7 +51,7 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
     print("--- define optimizer for GT Encoder---")
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
-    model_path = hypar ["model_path"]
+    model_path = weights_path
     model_save_fre = hypar ["model_save_fre"]
     max_ite = hypar ["max_ite"]
     batch_size_train = hypar ["batch_size_train"]
@@ -276,17 +279,19 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
 
 
 def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, hypar,
-          train_dataloaders_val, train_datasets_val, logs_path, tensorboard_path):
-
+          train_dataloaders_val, train_datasets_val):
     # train logs
-    csvlogger = CsvLogger(filename=logs_path,
+    csvlogger = CsvLogger(filename='train_logs.csv',
                           delimiter=',',
                           level=logging.INFO,
                           fmt=f'%(asctime)s{","}%(message)s',
                           datefmt='%Y/%m/%d , %H:%M:%S',
                           header=['date', 'time', 'epoch', 'batch', 'ite', 'train_loss', 'tar', 'sec_per_iter'])
 
-    # tensorboard path
+    # tensorboard logs
+    cwd = os.getcwd()
+    Path(os.path.sep.join([cwd, "tensorboard"])).mkdir(parents=True, exist_ok=True)
+    tensorboard_path = os.path.join(cwd, 'tensorboard')
     writer = SummaryWriter(tensorboard_path)
 
     if hypar ["interm_sup"]:
@@ -297,7 +302,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
         for param in featurenet.parameters():
             param.requires_grad = False
 
-    model_path = hypar ["model_path"]
+    model_path = weights_path
     model_save_fre = hypar ["model_save_fre"]
     max_ite = hypar ["max_ite"]
     batch_size_train = hypar ["batch_size_train"]
@@ -420,22 +425,14 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                                  "_time_" + str(np.round(np.mean(np.array(tmp_time)) / batch_size_valid, 6)) + ".pth"
                     torch.save(net.state_dict(), model_path + model_name)
 
-                    # writer.add_scalars('dis',
-                    #                    {'TrainLoss': np.round(running_loss / ite_num4val, 4),
-                    #                     'TrainTarLoss': np.round(running_tar_loss / ite_num4val, 4),
-                    #                     'ValLoss': np.round(val_loss / (i_val + 1), 4),
-                    #                     'ValTarLoss': np.round(tar_loss / (i_val + 1), 4),
-                    #                     'F1': round(tmp_f1[0], 4),
-                    #                     'MAE': round(tmp_mae[0], 4)
-                    #                     }, ite_num)
                     writer.add_scalars('train',
                                        {'Loss': np.round(running_loss / ite_num4val, 4),
                                         'TarLoss': np.round(running_tar_loss / ite_num4val, 4)}, ite_num)
                     writer.add_scalars('valid',
                                        {'Loss': np.round(val_loss / (i_val + 1), 4),
                                         'TarLoss': np.round(tar_loss / (i_val + 1), 4)}, ite_num)
-                    writer.add_scalars('F1_score', {'F1': round(tmp_f1[0], 4)}, ite_num)
-                    writer.add_scalars('MAE', {'mae': round(tmp_mae[0], 4)}, ite_num)
+                    writer.add_scalars('F1_score', {'F1': round(tmp_f1 [0], 4)}, ite_num)
+                    writer.add_scalars('MAE', {'mae': round(tmp_mae [0], 4)}, ite_num)
 
                 running_loss = 0.0
                 running_tar_loss = 0.0
@@ -559,233 +556,6 @@ def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
     return tmp_f1, tmp_mae, val_loss, tar_loss, i_val, tmp_time
 
 
-def outputs_dir():
-    outputs = os.path.join(os.getcwd(), 'outputs')
-
-    if not os.path.exists(outputs):
-        saved_weights = os.path.join(outputs, 'saved_weights')
-        tensorboard_dir = os.path.join(outputs, 'tensorboard')
-        os.mkdir(outputs)
-        os.mkdir(saved_weights)
-        os.mkdir(tensorboard_dir)
-    print('Outputs directory: ', outputs)
-    return outputs
-
-
-# --------------- 2: Data Utils ---------------
-
-def create_dirs():
-    # create directories
-    cwd = os.getcwd()
-    Path(os.path.sep.join([cwd, "data"])).mkdir(parents=True, exist_ok=True)
-    data_dir = os.path.join(cwd, 'data')
-
-    Path(os.path.sep.join([data_dir, "train"])).mkdir(parents=True, exist_ok=True)
-    train_dir = os.path.join(data_dir, 'train')
-    # create train cache folder
-    Path(os.path.sep.join([train_dir, "cache"])).mkdir(parents=True, exist_ok=True)
-
-    Path(os.path.sep.join([data_dir, "val"])).mkdir(parents=True, exist_ok=True)
-    val_dir = os.path.join(data_dir, 'val')
-    # create val cache folder
-    Path(os.path.sep.join([val_dir, "cache"])).mkdir(parents=True, exist_ok=True)
-
-    Path(os.path.sep.join([data_dir, "test"])).mkdir(parents=True, exist_ok=True)
-    test_dir = os.path.join(data_dir, 'test')
-
-    Path(os.path.sep.join([data_dir, "data_logs"])).mkdir(parents=True, exist_ok=True)
-    logs_dir = os.path.join(data_dir, "data_logs")
-
-    return train_dir, val_dir, test_dir, logs_dir
-
-
-def add_unique_id_brand(data, last_count=1):
-    # add unique id
-    id_list = []
-    for x in range(last_count, len(data) + 1):
-        id_list.append(x)
-
-    data ['unique_id'] = id_list
-
-    # get brand
-    brand_list = []
-    img_list = data ['source_image_url'].to_list()
-    for i in img_list:
-        if len(i.split('__')) > 1:
-            brand_lst = i.split('/') [-1].split('__') [:2]
-            brand = '_'.join(brand_lst)
-        else:
-            brand = 'Unknown'
-        brand_list.append(brand)
-    data ['brand'] = brand_list
-
-    # get colour
-    colour_list = []
-    img_list = data ['source_image_url'].to_list()
-    for i in img_list:
-        if len(i.split('__')) > 1:
-            colour = i.split('/') [-1].split('__') [4]
-        else:
-            colour = 'Unknown'
-        colour_list.append(colour)
-    data ['colour'] = colour_list
-
-    return data
-
-
-def data_logs(data, data_dir):
-    with open(os.path.join(data_dir, "data_logs.txt"), "w") as f:
-        print('Number of total images:  ', len(data), file=f)
-        print('\n', file=f)
-        # last_id = data['unique_id'].max()
-        # print('The latest ID count: ', last_id, file=f)
-        # print('\n', file=f)
-
-        vehicle_count = data ['reg'].nunique()
-        print('Number of Vehicles : ', vehicle_count, file=f)
-        print('\n', file=f)
-
-        brand_count = dict(data ['brand'].value_counts())
-        # creating a dictionary of brand type value counts
-        y = list(brand_count.keys())
-        print('Number of brands/classes: ', len(y), file=f)
-        print('\n', file=f)
-        print('Number of images per class : ', file=f)
-        print("{:<35} {:<15}".format('Class', 'Images'), file=f)
-        for k, v in brand_count.items():
-            print("{:<35} {:<15}".format(k, v), file=f)
-
-        # colour logs
-        colour_count = dict(data ['colour'].value_counts())
-        # creating a dictionary of colour type value counts
-        print('\n', file=f)
-        print('Number of images per colour : ', file=f)
-        print("{:<35} {:<15}".format('Colour', 'Images'), file=f)
-        for kk, vv in colour_count.items():
-            print("{:<35} {:<15}".format(kk, vv), file=f)
-
-    return f
-
-
-def split_data(data):
-    # split data 70% train, 20% val, and 10% test
-    train_data = data [:int(len(data) * 0.7)]
-    val_data = data [int(len(data) * 0.7):int(len(data) * 0.9)]
-    test_data = data [int(len(data) * 0.9):]
-    return train_data, val_data, test_data
-
-
-def download_data(in_data, out_dir):
-    # download URL data
-    # create image and mask directories
-    Path(os.path.sep.join([out_dir, "im"])).mkdir(parents=True, exist_ok=True)  # images dir
-    Path(os.path.sep.join([out_dir, "gt"])).mkdir(parents=True, exist_ok=True)  # masks dir
-    images_dir = os.path.join(out_dir, 'im')
-    masks_dir = os.path.join(out_dir, 'gt')
-
-    images = in_data ['source_image_url']
-    masks = in_data ['mask_url']
-
-    # download images
-    for i in images:
-        image_name = str(in_data.loc [in_data ['source_image_url'] == i, 'unique_id'].iloc [0]) + ".jpg"
-        print('Downloading Image #: ', image_name)
-        try:
-            wget.download(i, os.path.join(images_dir, image_name))
-        except:
-            pass
-    print('Images download complete')
-    # download masks
-    for i in masks:
-        mask_name = str(in_data.loc [in_data ['mask_url'] == i, 'unique_id'].iloc [0]) + ".jpg"
-        print('Downloading mask #: ', mask_name)
-        try:
-            wget.download(i, os.path.join(masks_dir, mask_name))
-        except:
-            pass
-    print('Masks download complete')
-
-
-def rename_mask_ext(msk_dir):
-    for msk_name in os.listdir(msk_dir):
-        in_filename = os.path.join(msk_dir, msk_name)
-        if not os.path.isfile(in_filename): continue
-        os.path.splitext(msk_name)
-        newname = in_filename.replace('.jpg', '.png')
-        os.rename(in_filename, newname)
-
-
-def filter_data(data_dir):
-    # define images and masks directories
-    images_dir = os.path.join(data_dir, 'im')
-    masks_dir = os.path.join(data_dir, 'gt')
-    images_path = os.listdir(images_dir)
-    masks_path = os.listdir(masks_dir)
-
-    # check quantity and remove unmatch images
-    if len(images_path) == len(masks_path):
-        print('Download quantity matched')
-        print(len(images_path), ' images saved')
-        print(len(masks_path), ' masks saved')
-        rename_mask_ext(masks_dir)
-    elif len(images_path) != len(masks_path):
-        for i, j in zip(images_path, masks_path):
-            if i not in masks_path:
-                i = os.path.join(images_dir, i)
-                os.remove(i)
-            elif j not in images_path:
-                j = os.path.join(masks_dir, j)
-                os.remove(j)
-        rename_mask_ext(masks_dir)
-        print('Data filtration completed')
-        print(len(images_path), ' images saved')
-        print(len(masks_path), ' masks saved')
-
-
-def data_prep(csv_data):
-    # step one data prep
-    print('[INFO]: Start raw data preprocessing ...')
-    train_dir, val_dir, test_dir, log_dir = create_dirs()
-    raw_data = pd.read_csv(csv_data)[:50]
-    # clean_data = clean_data_player(raw_data, player_ids)
-    data = add_unique_id_brand(raw_data)
-
-    # logging preprocessed data
-    data_logs(data, log_dir)
-
-    print('[INFO]: Data preprocessing completed')
-    print('\n')
-
-    # split and download data
-    train_data, val_data, test_data = split_data(data)
-
-    # download and filter data
-    print('[INFO]: Start downloading data')
-    # download training data
-    print('[INFO]: Downloading training data')
-    download_data(train_data, train_dir)
-    # filter training data
-    print('[INFO]: Filtering training data')
-    filter_data(train_dir)
-    # download validation data
-    print('\n')
-    print('[INFO]: Downloading validation data')
-    download_data(val_data, val_dir)
-    # filter validation data
-    print('[INFO]: Filtering validation data')
-    filter_data(val_dir)
-    # download testing data
-    print('\n')
-    print('[INFO]: Downloading testing data')
-    download_data(test_data, test_dir)
-    # filter testing data
-    print('[INFO]: Filtering testing data')
-    filter_data(test_dir)
-    print('\n')
-    print('[INFO]: Data Prep completed')
-    return train_dir, val_dir
-
-
 def create_inputs(train_dir, val_dir):
     dataset_train = {"name": 'TRAIN-DATA',
                      "im_dir": os.path.join(train_dir, 'im'),
@@ -805,3 +575,20 @@ def create_inputs(train_dir, val_dir):
     valid_datasets = [dataset_val]
 
     return train_datasets, valid_datasets
+
+
+def upload_file_to_s3(file_path, bucket_name, s3_key):
+    s3 = boto3.client('s3')
+    s3.upload_file(file_path, bucket_name, s3_key)
+
+
+def upload_folder_to_s3(local_folder_path, s3_bucket_name, s3_folder_path):
+    s3 = boto3.client('s3')
+
+    for root, dirs, files in os.walk(local_folder_path):
+        for file in files:
+            local_file_path = os.path.join(root, file)
+            relative_path = os.path.relpath(local_file_path, local_folder_path)
+            # Convert backslashes to forward slashes
+            s3_key = os.path.join(s3_folder_path, relative_path).replace("\\","/")
+            s3.upload_file(local_file_path, s3_bucket_name, s3_key)

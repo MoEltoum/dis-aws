@@ -1,10 +1,13 @@
-from utils import *
+from utils2 import *
 import argparse
+import shutil
 
 
-def main(hypar):
+def main(train_dir,
+         val_dir,
+         hypar):
     # --- Step 0: Build datasets ---
-    train_datasets, valid_datasets = create_inputs(hypar ["train_inputs"], hypar ["val_inputs"])
+    train_datasets, valid_datasets = create_inputs(train_dir, val_dir)
 
     # --- Step 1: Build dataloaders ---
     print("--- create training dataloader ---")
@@ -62,19 +65,17 @@ def main(hypar):
 
     if (hypar ["restore_model"] != ""):
         print("restore model from:")
-        print(hypar ["model_path"] + "/" + hypar ["restore_model"])
+        model_path = os.path.join(os.getcwd(), 'weights')
+        print(model_path + "/" + hypar ["restore_model"])
         if torch.cuda.is_available():
-            net.load_state_dict(torch.load(hypar ["model_path"] + "/" + hypar ["restore_model"]))
+            net.load_state_dict(torch.load(model_path + "/" + hypar ["restore_model"]))
         else:
-            net.load_state_dict(torch.load(hypar ["model_path"] + "/" + hypar ["restore_model"], map_location="cpu"))
+            net.load_state_dict(torch.load(model_path + "/" + hypar ["restore_model"], map_location="cpu"))
 
     print("--- define optimizer ---")
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
-    # --- Step 3: checking outputs directory ---
-    # outputs_dir()
-
-    # --- Step 4: Train and Valid Model ---
+    # --- Step 3: Train and Valid Model ---
 
     train(net,
           optimizer,
@@ -83,18 +84,25 @@ def main(hypar):
           valid_dataloaders,
           valid_datasets,
           hypar,
-          train_dataloaders_val, train_datasets_val,
-          hypar["logs_path"], hypar["tensorboard_path"])
+          train_dataloaders_val, train_datasets_val
+          )
+
+    # --- Step 4: upload to S3 and delete after---
+    upload_file_to_s3('train_logs.csv', hypar ["s3_bucket"], hypar ["s3_logs_path"])
+    os.remove('train_logs.csv')
+    upload_folder_to_s3('tensorboard', hypar ["s3_bucket"], hypar ["s3_tensorboard_path"])
+    shutil.rmtree(os.path.join(os.getcwd(), 'tensorboard'))
+    upload_folder_to_s3('weights', hypar ["s3_bucket"], hypar ["s3_model_path"])
+    shutil.rmtree(os.path.join(os.getcwd(), 'weights'))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
-    default_hyper = {"logs_path": "/home/aos-mo/Documents/ML_models/dis_2/outputs/logs/logs.csv",
-                     "tensorboard_path": "/home/aos-mo/Documents/ML_models/dis_2/outputs/tensorboard",
-                     "model_path": "/home/aos-mo/Documents/ML_models/dis_2/outputs/saved_weights",
-                     "train_inputs": "/home/aos-mo/Documents/ML_models/dis_2/data/train",
-                     "val_inputs": "/home/aos-mo/Documents/ML_models/dis_2/data/val",
+    default_hyper = {"s3_bucket": "dis-sagemaker",
+                     "s3_logs_path": "experiment-1/outputs/logs/train_logs.csv",
+                     "s3_tensorboard_path": "experiment-1/outputs/tensorboard",
+                     "s3_model_path": "experiment-1/outputs/saved_weights",
                      "interm_sup": False,
                      "valid_out_dir": "",
                      "restore_model": "",
@@ -118,10 +126,10 @@ if __name__ == "__main__":
                      "max_epoch_num": 10
                      }
 
-    # parser.add_argument('--train_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/train')
-    # parser.add_argument('--val_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/val')
+    parser.add_argument('--train_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/train')
+    parser.add_argument('--val_inputs', default='/home/aos-mo/Documents/ML_models/dis_2/data/val')
     parser.add_argument('--hyperparams', default=default_hyper)
 
     args, _ = parser.parse_known_args()
 
-    main(args.hyperparams)
+    main(args.train_inputs, args.val_inputs, args.hyperparams)
