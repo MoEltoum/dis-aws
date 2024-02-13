@@ -7,3 +7,4 @@ tqdm==4.19.9
 csv-logger==1.3.0
 wget==3.2
 tensorboard==2.15.1
+boto3==1.34.40
