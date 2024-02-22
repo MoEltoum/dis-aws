@@ -1,5 +1,4 @@
 # Use an official PyTorch runtime as a parent image
-#FROM python:3.9-slim
 FROM pytorch/pytorch:1.12.1-cuda11.3-cudnn8-runtime
 
 RUN apt-get update && apt-get install -y \
@@ -15,11 +14,12 @@ COPY . /opt/ml/code
 # Install any needed packages specified in requirements.txt
 RUN pip --no-cache-dir install --upgrade pip
 
-#COPY requirements.txt requirements.txt
+COPY requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Define environment variable
 #ENV SAGEMAKER_PROGRAM train.py
 
 # Run train_segmentation.py when the container launches
-ENTRYPOINT ["python", "train.py"]
+ENTRYPOINT ["python", "/opt/ml/code/train.py"]
+

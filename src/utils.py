@@ -14,6 +14,7 @@ from torch.autograd import Variable
 import torch.nn as nn
 from data_loader_cache import get_im_gt_name_dict, create_dataloaders, GOSRandomHFlip, GOSNormalize
 from basics import f1_mae_torch
+import torch
 from torch.utils.tensorboard import SummaryWriter
 from models.isnet import *
 
@@ -21,22 +22,22 @@ from models.isnet import *
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # define model local
-cwd = os.getcwd()
-Path(os.path.sep.join([cwd, "weights"])).mkdir(parents=True, exist_ok=True)
-weights_path = os.path.join(cwd, 'weights')
+Path(os.path.sep.join(["/opt/ml/code/", "weights"])).mkdir(parents=True, exist_ok=True)
+weights_path = os.path.join("/opt/ml/code/", 'weights')
 
 
-def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, hypar, train_dataloaders_val,
-                   train_datasets_val):
-    torch.manual_seed(hypar ["seed"])
+def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, train_dataloaders_val,
+                   train_datasets_val, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre,
+                   batch_size_train, batch_size_valid, max_ite, max_epoch_num, valid_out_dir):
+    torch.manual_seed(seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed(hypar ["seed"])
+        torch.cuda.manual_seed(seed)
 
     print("define gt encoder ...")
     net = ISNetGTEncoder()
     # load the existing model gt encoder
-    if (hypar ["gt_encoder_model"] != ""):
-        model_path = weights_path + "/" + hypar ["gt_encoder_model"]
+    if (gt_encoder_model != ""):
+        model_path = weights_path + "/" + gt_encoder_model
         if torch.cuda.is_available():
             net.load_state_dict(torch.load(model_path))
             net.cuda()
@@ -52,15 +53,15 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
     model_path = weights_path
-    model_save_fre = hypar ["model_save_fre"]
-    max_ite = hypar ["max_ite"]
-    batch_size_train = hypar ["batch_size_train"]
-    batch_size_valid = hypar ["batch_size_valid"]
+    model_save_fre = model_save_fre
+    max_ite = max_ite
+    batch_size_train = batch_size_train
+    batch_size_valid = batch_size_valid
 
     if (not os.path.exists(model_path)):
         os.mkdir(model_path)
 
-    ite_num = hypar ["start_ite"]  # count the total iteration number
+    ite_num = start_ite  # count the total iteration number
     ite_num4val = 0  #
     running_loss = 0.0  # count the total loss
     running_tar_loss = 0.0  # count the target output loss
@@ -72,7 +73,7 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
 
     start_last = time.time()
     gos_dataloader = train_dataloaders [0]
-    epoch_num = hypar ["max_epoch_num"]
+    epoch_num = max_epoch_num
     notgood_cnt = 0
     for epoch in range(epoch_num):  # set the epoch num as 100000
 
@@ -89,7 +90,7 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
             # get the inputs
             labels = data ['label']
 
-            if (hypar ["model_digit"] == "full"):
+            if (model_digit == "full"):
                 labels = labels.type(torch.FloatTensor)
             else:
                 labels = labels.type(torch.HalfTensor)
@@ -127,8 +128,9 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
             if ite_num % model_save_fre == 0:  # validate every 2000 iterations
                 notgood_cnt += 1
                 tmp_f1, tmp_mae, val_loss, tar_loss, i_val, tmp_time = valid_gt_encoder(net, train_dataloaders_val,
-                                                                                        train_datasets_val, hypar,
-                                                                                        epoch)
+                                                                                        train_datasets_val, model_digit,
+                                                                                        batch_size_valid, max_epoch_num,
+                                                                                        valid_out_dir, epoch)
 
                 net.train()  # resume train
 
@@ -165,7 +167,7 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
                     print("GT encoder is well-trained and obtained...")
                     return net
 
-                if (notgood_cnt >= hypar ["early_stop"]):
+                if (notgood_cnt >= early_stop):
                     print("No improvements in the last " + str(
                         notgood_cnt) + " validation periods, so training stopped !")
                     exit()
@@ -174,10 +176,11 @@ def get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_d
     return net
 
 
-def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
+def valid_gt_encoder(net, valid_dataloaders, valid_datasets, model_digit, batch_size_valid, max_epoch_num,
+                     valid_out_dir, epoch=0):
     net.eval()
     print("Validating...")
-    epoch_num = hypar ["max_epoch_num"]
+    epoch_num = max_epoch_num
 
     val_loss = 0.0
     tar_loss = 0.0
@@ -206,7 +209,7 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
 
             imidx_val, labels_val, shapes_val = data_val ['imidx'], data_val ['label'], data_val ['shape']
 
-            if (hypar ["model_digit"] == "full"):
+            if model_digit == "full":
                 labels_val = labels_val.type(torch.FloatTensor)
             else:
                 labels_val = labels_val.type(torch.HalfTensor)
@@ -225,7 +228,7 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
             loss2_val, loss_val = net.compute_loss(ds_val, labels_val_v)
 
             # compute F measure
-            for t in range(hypar ["batch_size_valid"]):
+            for t in range(batch_size_valid):
                 val_cnt = val_cnt + 1.0
                 print("num of val: ", val_cnt)
                 i_test = imidx_val [t].data.numpy()
@@ -244,7 +247,7 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
                 with torch.no_grad():
                     gt = torch.tensor(gt).to(device)
 
-                pre, rec, f1, mae = f1_mae_torch(pred_val * 255, gt, valid_dataset, i_test, mybins, hypar)
+                pre, rec, f1, mae = f1_mae_torch(pred_val * 255, gt, valid_dataset, i_test, mybins, valid_out_dir)
 
                 PRE [i_test, :] = pre
                 REC [i_test, :] = rec
@@ -278,10 +281,13 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
     return tmp_f1, tmp_mae, val_loss, tar_loss, i_val, tmp_time
 
 
-def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, hypar,
-          train_dataloaders_val, train_datasets_val):
+def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, valid_datasets,
+          train_dataloaders_val, train_datasets_val,
+          interm_sup, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre,
+          batch_size_train, batch_size_valid, max_ite, max_epoch_num, valid_out_dir):
     # train logs
-    csvlogger = CsvLogger(filename='train_logs.csv',
+    Path(os.path.sep.join(["/opt/ml/code/", "logs"])).mkdir(parents=True, exist_ok=True)
+    csvlogger = CsvLogger(filename="/opt/ml/code/logs/train_logs.csv",
                           delimiter=',',
                           level=logging.INFO,
                           fmt=f'%(asctime)s{","}%(message)s',
@@ -289,29 +295,30 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                           header=['date', 'time', 'epoch', 'batch', 'ite', 'train_loss', 'tar', 'sec_per_iter'])
 
     # tensorboard logs
-    cwd = os.getcwd()
-    Path(os.path.sep.join([cwd, "tensorboard"])).mkdir(parents=True, exist_ok=True)
-    tensorboard_path = os.path.join(cwd, 'tensorboard')
+    Path(os.path.sep.join(["/opt/ml/code/", "tensorboard"])).mkdir(parents=True, exist_ok=True)
+    tensorboard_path = os.path.join("/opt/ml/code/", 'tensorboard')
     writer = SummaryWriter(tensorboard_path)
 
-    if hypar ["interm_sup"]:
+    if interm_sup:
         print("Get the gt encoder ...")
-        featurenet = get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_datasets, hypar,
-                                    train_dataloaders_val, train_datasets_val)
+        featurenet = get_gt_encoder(train_dataloaders, train_datasets, valid_dataloaders, valid_datasets,
+                                    train_dataloaders_val, train_datasets_val,
+                                    start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre,
+                                    batch_size_train, batch_size_valid, max_ite, max_epoch_num, valid_out_dir)
         # freeze the weights of gt encoder
         for param in featurenet.parameters():
             param.requires_grad = False
 
     model_path = weights_path
-    model_save_fre = hypar ["model_save_fre"]
-    max_ite = hypar ["max_ite"]
-    batch_size_train = hypar ["batch_size_train"]
-    batch_size_valid = hypar ["batch_size_valid"]
+    model_save_fre = model_save_fre
+    max_ite = max_ite
+    batch_size_train = batch_size_train
+    batch_size_valid = batch_size_valid
 
     if (not os.path.exists(model_path)):
         os.mkdir(model_path)
 
-    ite_num = hypar ["start_ite"]  # count the total iteration number
+    ite_num = start_ite  # count the total iteration number
     ite_num4val = 0  #
     running_loss = 0.0  # count the toal loss
     running_tar_loss = 0.0  # count the target output loss
@@ -323,7 +330,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
 
     start_last = time.time()
     gos_dataloader = train_dataloaders [0]
-    epoch_num = hypar ["max_epoch_num"]
+    epoch_num = max_epoch_num
     notgood_cnt = 0
     for epoch in range(epoch_num):  # set the epoch num as 100000
 
@@ -339,7 +346,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
             # get the inputs
             inputs, labels = data ['image'], data ['label']
 
-            if (hypar ["model_digit"] == "full"):
+            if (model_digit == "full"):
                 inputs = inputs.type(torch.FloatTensor)
                 labels = labels.type(torch.FloatTensor)
             else:
@@ -357,7 +364,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
             start_inf_loss_back = time.time()
             optimizer.zero_grad()
 
-            if hypar ["interm_sup"]:
+            if interm_sup:
                 # forward + backward + optimize
                 ds, dfs = net(inputs_v)
                 _, fs = featurenet(labels_v)  ## extract the gt encodings
@@ -396,7 +403,8 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                 notgood_cnt += 1
                 net.eval()
                 tmp_f1, tmp_mae, val_loss, tar_loss, i_val, tmp_time = valid(net, valid_dataloaders, valid_datasets,
-                                                                             hypar, epoch)
+                                                                             model_digit, batch_size_valid,
+                                                                             max_epoch_num, valid_out_dir, epoch)
                 net.train()  # resume train
 
                 tmp_out = 0
@@ -438,7 +446,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                 running_tar_loss = 0.0
                 ite_num4val = 0
 
-                if (notgood_cnt >= hypar ["early_stop"]):
+                if (notgood_cnt >= early_stop):
                     print("No improvements in the last " + str(
                         notgood_cnt) + " validation periods, so training stopped !")
                     logging.info("No improvements in the last " + str(
@@ -448,10 +456,10 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
     print("Training Reaches The Maximum Epoch Number")
 
 
-def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
+def valid(net, valid_dataloaders, valid_datasets, model_digit, batch_size_valid, max_epoch_num, valid_out_dir, epoch=0):
     net.eval()
     print("Validating...")
-    epoch_num = hypar ["max_epoch_num"]
+    epoch_num = max_epoch_num
 
     val_loss = 0.0
     tar_loss = 0.0
@@ -480,7 +488,7 @@ def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
             imidx_val, inputs_val, labels_val, shapes_val = data_val ['imidx'], data_val ['image'], data_val ['label'], \
                 data_val ['shape']
 
-            if (hypar ["model_digit"] == "full"):
+            if model_digit == "full":
                 inputs_val = inputs_val.type(torch.FloatTensor)
                 labels_val = labels_val.type(torch.FloatTensor)
             else:
@@ -503,7 +511,7 @@ def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
             loss2_val, loss_val = net.compute_loss(ds_val, labels_val_v)
 
             # compute F measure
-            for t in range(hypar ["batch_size_valid"]):
+            for t in range(batch_size_valid):
                 i_test = imidx_val [t].data.numpy()
 
                 pred_val = ds_val [0] [t, :, :, :]  # B x 1 x H x W
@@ -517,6 +525,7 @@ def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
                 mi = torch.min(pred_val)
                 pred_val = (pred_val - mi) / (ma - mi)  # max = 1
 
+                # valid_dataset.dataset ["ori_gt_path"] = list_files('/opt/ml/code/data/val/gt')
                 if len(valid_dataset.dataset ["ori_gt_path"]) != 0:
                     gt = np.squeeze(io.imread(valid_dataset.dataset ["ori_gt_path"] [i_test]))  # max = 255
                 else:
@@ -524,7 +533,7 @@ def valid(net, valid_dataloaders, valid_datasets, hypar, epoch=0):
                 with torch.no_grad():
                     gt = torch.tensor(gt).to(device)
 
-                pre, rec, f1, mae = f1_mae_torch(pred_val * 255, gt, valid_dataset, i_test, mybins, hypar)
+                pre, rec, f1, mae = f1_mae_torch(pred_val * 255, gt, valid_dataset, i_test, mybins, valid_out_dir)
 
                 PRE [i_test, :] = pre
                 REC [i_test, :] = rec
@@ -590,5 +599,41 @@ def upload_folder_to_s3(local_folder_path, s3_bucket_name, s3_folder_path):
             local_file_path = os.path.join(root, file)
             relative_path = os.path.relpath(local_file_path, local_folder_path)
             # Convert backslashes to forward slashes
-            s3_key = os.path.join(s3_folder_path, relative_path).replace("\\","/")
+            s3_key = os.path.join(s3_folder_path, relative_path).replace("\\", "/")
             s3.upload_file(local_file_path, s3_bucket_name, s3_key)
+
+
+def download_folder_from_s3(bucket_name, s3_folder, local_folder):
+    s3_client = boto3.client('s3')
+
+    # Create the local folder if it doesn't exist
+    os.makedirs(local_folder, exist_ok=True)
+
+    # List objects in the S3 folder recursively
+    paginator = s3_client.get_paginator('list_objects_v2')
+    operation_parameters = {'Bucket': bucket_name, 'Prefix': s3_folder}
+    page_iterator = paginator.paginate(**operation_parameters)
+
+    for page in page_iterator:
+        if 'Contents' in page:
+            for obj in page ['Contents']:
+                # Construct the local file path
+                local_file_path = os.path.join(local_folder, os.path.relpath(obj ['Key'], s3_folder))
+
+                # Create any necessary local directories
+                os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+
+                # Download the object
+                s3_client.download_file(bucket_name, obj ['Key'], local_file_path)
+
+
+def list_files(directory):
+    file_list = []
+    # Walk through all files in the directory
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            # Join the root path and the file name to get the full path
+            file_path = os.path.join(root, file)
+            # Append the full path to the list
+            file_list.append(file_path)
+    return file_list

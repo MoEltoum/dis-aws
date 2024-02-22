@@ -48,7 +48,7 @@ def f1score_torch(pd,gt):
 	return torch.reshape(precision,(1,precision.shape[0])),torch.reshape(recall,(1,recall.shape[0])),torch.reshape(f1,(1,f1.shape[0]))
 
 
-def f1_mae_torch(pred, gt, valid_dataset, idx, mybins, hypar):
+def f1_mae_torch(pred, gt, valid_dataset, idx, mybins, valid_out_dir):
 
 	import time
 	tic = time.time()
@@ -61,10 +61,10 @@ def f1_mae_torch(pred, gt, valid_dataset, idx, mybins, hypar):
 
 
 	# hypar["valid_out_dir"] = hypar["valid_out_dir"]+"-eval" ###
-	if(hypar["valid_out_dir"]!=""):
-		if(not os.path.exists(hypar["valid_out_dir"])):
-			os.mkdir(hypar["valid_out_dir"])
-		dataset_folder = os.path.join(hypar["valid_out_dir"],valid_dataset.dataset["data_name"][idx])
+	if(valid_out_dir!=""):
+		if(not os.path.exists(valid_out_dir)):
+			os.mkdir(valid_out_dir)
+		dataset_folder = os.path.join(valid_out_dir,valid_dataset.dataset["data_name"][idx])
 		if(not os.path.exists(dataset_folder)):
 			os.mkdir(dataset_folder)
 		io.imsave(os.path.join(dataset_folder,valid_dataset.dataset["im_name"][idx]+".png"),pred.cpu().data.numpy().astype(np.uint8))
@@ -72,3 +72,4 @@ def f1_mae_torch(pred, gt, valid_dataset, idx, mybins, hypar):
 	print("time for evaluation : ", time.time()-tic)
 
 	return pre.cpu().data.numpy(), rec.cpu().data.numpy(), f1.cpu().data.numpy(), mae.cpu().data.numpy()
+
