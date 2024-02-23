@@ -12,6 +12,9 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     # download data from s3
     if not os.path.exists(os.path.join("/opt/ml/code/", "data")):
         download_folder_from_s3(s3_bucket, s3_train_data, "/opt/ml/code/data")
+    # make sure cache folder exists
+    Path(os.path.sep.join(["/opt/ml/code/data/train", "cache"])).mkdir(parents=True, exist_ok=True)
+    Path(os.path.sep.join(["/opt/ml/code/data/val", "cache"])).mkdir(parents=True, exist_ok=True)
     # get train and val directories
     train_dir = os.path.join(os.path.join("/opt/ml/code/data", "train"))
     val_dir = os.path.join(os.path.join("/opt/ml/code/data", "val"))
