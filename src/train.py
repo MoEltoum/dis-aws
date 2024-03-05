@@ -89,7 +89,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
 
     # --- Step 3: Setup Mlflow tracking ---
     # first make sure mlflow is updated
-    # download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
+    download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
 
