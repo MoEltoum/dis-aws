@@ -87,17 +87,85 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     print("--- define optimizer ---")
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
-    # --- Step 3: Train and Valid Model ---
+    # --- Step 3: Setup Mlflow tracking ---
+    # first make sure mlflow is updated
+    download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
+    mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
+    mlflow.set_experiment("DIS")
 
-    train(net,
-          optimizer,
-          train_dataloaders,
-          train_datasets,
-          valid_dataloaders,
-          valid_datasets,
-          train_dataloaders_val, train_datasets_val,
-          interm_sup, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre, batch_size_train,
-          batch_size_valid, max_ite, max_epoch_num, valid_out_dir)
+    # --- Step 4: Train and Valid Model with MLflow logs ---
+    # Start a run with the next available run name
+    current_run_number = mlflow.get_experiment_by_name("DIS").tags.get("current_run_number", "0")
+    current_run_number = int(current_run_number)
+
+    # Determine the next available run name
+    next_run_name = f"dis-ff-{current_run_number}"
+    mlflow.set_experiment("DIS")
+
+    with mlflow.start_run(run_name=next_run_name) as run:
+        # Set the run name tag
+        mlflow.set_tag("mlflow.runName", next_run_name)
+        # Log hyperparameters
+        mlflow.log_params({
+            "max_epochs": max_epoch_num,
+            "train_batch_size": batch_size_train,
+            "val_batch_size": batch_size_valid,
+            "max_iterations": max_ite,
+            "early_stop": early_stop,
+            "model_save_frequency": model_save_fre
+        })
+        # Increment the run number for the next run
+        current_run_number += 1
+        mlflow.set_experiment("DIS")
+        mlflow.set_experiment_tags({"current_run_number": str(current_run_number)})
+
+        train(net,
+              optimizer,
+              train_dataloaders,
+              train_datasets,
+              valid_dataloaders,
+              valid_datasets,
+              train_dataloaders_val, train_datasets_val,
+              interm_sup, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre, batch_size_train,
+              batch_size_valid, max_ite, max_epoch_num, valid_out_dir)
+
+        # --- Generate predictions and calculate HCE ---
+        model_path = os.path.join("/opt/ml/code/", 'weights')
+        model_list = os.listdir(model_path)
+        model_list.sort(key=lambda x: int(x.split('_') [2]))
+        restore_model = model_list [-1]
+        valid_out_dir = "/opt/ml/code/"
+
+        # rebuild model for validation
+        print("--- rebuild model for validation ---")
+        net = ISNetDIS()
+
+        # convert to half precision
+        if (model_digit == "half"):
+            net.half()
+            for layer in net.modules():
+                if isinstance(layer, nn.BatchNorm2d):
+                    layer.float()
+
+        if torch.cuda.is_available():
+            net.cuda()
+
+        if (restore_model != ""):
+            print("restore model from:")
+            print(model_path + "/" + restore_model)
+            if torch.cuda.is_available():
+                net.load_state_dict(torch.load(model_path + "/" + restore_model))
+            else:
+                net.load_state_dict(
+                    torch.load(model_path + "/" + restore_model, map_location="cpu"))
+
+        valid(net, valid_dataloaders, valid_datasets, model_digit, batch_size_valid, max_epoch_num,
+              valid_out_dir, epoch=0)
+
+        pred_path = '/opt/ml/code/VAL-DATA'
+        gt_path = '/opt/ml/code/data/val/gt'
+        hce = compute_hce(pred_path, gt_path, "")
+        mlflow.log_metric("hce", hce)
 
     # --- Step 4: upload to S3 and delete after---
     upload_folder_to_s3(os.path.sep.join(["/opt/ml/code/", "logs"]), s3_bucket, s3_logs_path)
@@ -107,6 +175,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     upload_folder_to_s3(os.path.sep.join(["/opt/ml/code/", "tensorboard"]), s3_bucket,
                         s3_tensorboard_path)
     shutil.rmtree(os.path.join("/opt/ml/code/", 'tensorboard'))
+    upload_folder_to_s3("/opt/ml/code/mlruns", s3_bucket, "mlruns")
 
 
 if __name__ == "__main__":
