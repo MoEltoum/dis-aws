@@ -89,7 +89,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
 
     # --- Step 3: Setup Mlflow tracking ---
     # first make sure mlflow is updated
-    download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
+    # download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
 
@@ -176,6 +176,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
                         s3_tensorboard_path)
     shutil.rmtree(os.path.join("/opt/ml/code/", 'tensorboard'))
     upload_folder_to_s3("/opt/ml/code/mlruns", s3_bucket, "mlruns")
+    shutil.rmtree("/opt/ml/code/VAL-DATA")
 
 
 if __name__ == "__main__":
@@ -213,4 +214,3 @@ if __name__ == "__main__":
          args.model_digit, args.seed, args.cache_size, args.cache_boost_train, args.cache_boost_valid, args.input_size,
          args.crop_size, args.random_flip_h, args.random_flip_v, args.early_stop, args.model_save_fre,
          args.batch_size_train, args.batch_size_valid, args.max_ite, args.max_epoch_num)
-
