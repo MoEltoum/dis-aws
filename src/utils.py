@@ -3,6 +3,7 @@ import os
 import time
 from pathlib import Path
 import boto3
+from botocore.exceptions import ClientError
 import logging
 from csv_logger import CsvLogger
 import numpy as np
@@ -291,7 +292,7 @@ def valid_gt_encoder(net, valid_dataloaders, valid_datasets, model_digit, batch_
 def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, valid_datasets,
           train_dataloaders_val, train_datasets_val,
           interm_sup, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre,
-          batch_size_train, batch_size_valid, max_ite, max_epoch_num, valid_out_dir):
+          batch_size_train, batch_size_valid, max_ite, max_epoch_num, valid_out_dir, s3_bucket):
     # train logs
     Path(os.path.sep.join(["/opt/ml/code/", "logs"])).mkdir(parents=True, exist_ok=True)
     csvlogger = CsvLogger(filename="/opt/ml/code/logs/train_logs.csv",
@@ -453,6 +454,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                 mlflow.log_metric("val_loss", np.round(val_loss / (i_val + 1), 4), step=ite_num)
                 mlflow.log_metric("F1_score", round(tmp_f1 [0], 4), step=ite_num)
                 mlflow.log_metric("mae", round(tmp_mae [0], 4), step=ite_num)
+                upload_folder_to_s3("/opt/ml/code/mlruns", s3_bucket, "mlruns")
 
                 running_loss = 0.0
                 running_tar_loss = 0.0
@@ -463,7 +465,7 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
                         notgood_cnt) + " validation periods, so training stopped !")
                     logging.info("No improvements in the last " + str(
                         notgood_cnt) + " validation periods, so training stopped !")
-                    exit()
+                    return
 
     print("Training Reaches The Maximum Epoch Number")
 
@@ -637,6 +639,41 @@ def download_folder_from_s3(bucket_name, s3_folder, local_folder):
 
                 # Download the object
                 s3_client.download_file(bucket_name, obj ['Key'], local_file_path)
+
+
+def download_mlruns(s3_bucket, s3_prefix, local_dir):
+    # Initialize S3 client
+    s3 = boto3.client('s3')
+
+    # Create local directory if it doesn't exist
+    os.makedirs(local_dir, exist_ok=True)
+
+    # Function to download S3 objects recursively
+    def download_objects(prefix, local_prefix):
+        try:
+            response = s3.list_objects_v2(Bucket=s3_bucket, Prefix=prefix, Delimiter='/')
+        except ClientError as e:
+            if e.response ['Error'] ['Code'] == 'NoSuchKey':
+                print(f"The S3 folder '{prefix}' does not exist.")
+                return
+
+        for obj in response.get('Contents', []):
+            key = obj ['Key']
+            local_file_path = os.path.join(local_prefix, os.path.basename(key))
+
+            os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+            s3.download_file(s3_bucket, key, local_file_path)
+            print(f'Downloaded {key} to {local_file_path}')
+
+        for subdir in response.get('CommonPrefixes', []):
+            subdir_prefix = subdir ['Prefix']
+            subdir_name = os.path.basename(os.path.normpath(subdir_prefix))
+            subdir_path = os.path.join(local_prefix, subdir_name)
+            os.makedirs(subdir_path, exist_ok=True)
+            download_objects(subdir_prefix, subdir_path)
+
+    # Start downloading objects
+    download_objects(s3_prefix, local_dir)
 
 
 def filter_bdy_cond(bdy_, mask, cond):

@@ -1,11 +1,11 @@
 torch
 torchvision
-numpy==1.19.0
-opencv-python-headless==4.6.0.66
+numpy
+opencv-python-headless
 pandas
-scikit-image==0.15.0
-pillow==8.0.0
-tqdm==4.19.9
+scikit-image
+pillow
+tqdm
 csv-logger
 boto3
 wget

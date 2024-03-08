@@ -15,6 +15,8 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     # make sure cache folder exists
     Path(os.path.sep.join(["/opt/ml/code/data/train", "cache"])).mkdir(parents=True, exist_ok=True)
     Path(os.path.sep.join(["/opt/ml/code/data/val", "cache"])).mkdir(parents=True, exist_ok=True)
+    # make sure mlflow is updated
+    download_mlruns(s3_bucket, "mlruns", "/opt/ml/code")
     # get train and val directories
     train_dir = os.path.join(os.path.join("/opt/ml/code/data", "train"))
     val_dir = os.path.join(os.path.join("/opt/ml/code/data", "val"))
@@ -88,8 +90,6 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
     # --- Step 3: Setup Mlflow tracking ---
-    # first make sure mlflow is updated
-    download_folder_from_s3(s3_bucket, "mlruns", "/opt/ml/code/mlruns")
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
 
@@ -127,7 +127,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
               valid_datasets,
               train_dataloaders_val, train_datasets_val,
               interm_sup, start_ite, gt_encoder_model, model_digit, seed, early_stop, model_save_fre, batch_size_train,
-              batch_size_valid, max_ite, max_epoch_num, valid_out_dir)
+              batch_size_valid, max_ite, max_epoch_num, valid_out_dir, s3_bucket)
 
         # --- Generate predictions and calculate HCE ---
         model_path = os.path.join("/opt/ml/code/", 'weights')
@@ -177,6 +177,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     shutil.rmtree(os.path.join("/opt/ml/code/", 'tensorboard'))
     upload_folder_to_s3("/opt/ml/code/mlruns", s3_bucket, "mlruns")
     shutil.rmtree("/opt/ml/code/VAL-DATA")
+    shutil.rmtree("/opt/ml/code/mlruns")
 
 
 if __name__ == "__main__":
