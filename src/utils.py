@@ -380,7 +380,8 @@ def train(net, optimizer, train_dataloaders, train_datasets, valid_dataloaders, 
             else:
                 # forward + backward + optimize
                 ds, _ = net(inputs_v)
-                loss2, loss = net.compute_loss(ds, labels_v)
+                # loss2, loss = net.compute_loss(ds, labels_v)
+                loss2, loss = muti_loss_fusion(ds, labels_v)
 
             # writer.add_scalar("Loss/train", loss, epoch)
 
@@ -522,7 +523,8 @@ def valid(net, valid_dataloaders, valid_datasets, model_digit, batch_size_valid,
             t_end = time.time() - t_start
             tmp_time.append(t_end)
 
-            loss2_val, loss_val = net.compute_loss(ds_val, labels_val_v)
+            # loss2_val, loss_val = net.compute_loss(ds_val, labels_val_v)
+            loss2_val, loss_val = muti_loss_fusion(ds_val, labels_val_v)
 
             # compute F measure
             for t in range(batch_size_valid):
@@ -577,6 +579,24 @@ def valid(net, valid_dataloaders, valid_datasets, model_digit, batch_size_valid,
         tmp_mae.append(np.mean(MAE))
 
     return tmp_f1, tmp_mae, val_loss, tar_loss, i_val, tmp_time
+
+
+def muti_loss_fusion(preds, target):
+    bce_loss = nn.BCELoss(size_average=True)
+    loss0 = 0.0
+    loss = 0.0
+
+    for i in range(0, len(preds)):
+        # print("i: ", i, preds[i].shape)
+        if (preds [i].shape [2] != target.shape [2] or preds [i].shape [3] != target.shape [3]):
+            # tmp_target = _upsample_like(target,preds[i])
+            tmp_target = F.interpolate(target, size=preds [i].size() [2:], mode='bilinear', align_corners=True)
+            loss = loss + bce_loss(preds [i], tmp_target)
+        else:
+            loss = loss + bce_loss(preds [i], target)
+        if (i == 0):
+            loss0 = loss
+    return loss0, loss
 
 
 def create_inputs(train_dir, val_dir):

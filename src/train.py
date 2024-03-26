@@ -89,11 +89,14 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     print("--- define optimizer ---")
     optimizer = optim.Adam(net.parameters(), lr=1e-3, betas=(0.9, 0.999), eps=1e-08, weight_decay=0)
 
-    # --- Step 3: Setup Mlflow tracking ---
+    # --- Step 3: applying Distributed Data Parallelism ---
+    net = nn.DataParallel(net)
+
+    # --- Step 4: Setup Mlflow tracking ---
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
 
-    # --- Step 4: Train and Valid Model with MLflow logs ---
+    # --- Step 5: Train and Valid Model with MLflow logs ---
     # Start a run with the next available run name
     current_run_number = mlflow.get_experiment_by_name("DIS").tags.get("current_run_number", "0")
     current_run_number = int(current_run_number)
@@ -167,7 +170,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
         hce = compute_hce(pred_path, gt_path, "")
         mlflow.log_metric("hce", hce)
 
-    # --- Step 4: upload to S3 and delete after---
+    # --- Step 6: upload to S3 and delete after---
     upload_folder_to_s3(os.path.sep.join(["/opt/ml/code/", "logs"]), s3_bucket, s3_logs_path)
     shutil.rmtree(os.path.join("/opt/ml/code/", 'logs'))
     upload_folder_to_s3(os.path.sep.join(["/opt/ml/code/", "weights"]), s3_bucket, s3_model_path)
