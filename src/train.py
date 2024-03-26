@@ -91,7 +91,8 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
 
     # --- Step 3: applying Distributed Data Parallelism ---
     net = nn.DataParallel(net)
-
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net.to(device)
     # --- Step 4: Setup Mlflow tracking ---
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
@@ -140,19 +141,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
         valid_out_dir = "/opt/ml/code/"
 
         # rebuild model for validation
-        print("--- rebuild model for validation ---")
-        net = ISNetDIS()
-
-        # convert to half precision
-        if (model_digit == "half"):
-            net.half()
-            for layer in net.modules():
-                if isinstance(layer, nn.BatchNorm2d):
-                    layer.float()
-
-        if torch.cuda.is_available():
-            net.cuda()
-
+        print('===== Rebuild model for validation =====')
         if (restore_model != ""):
             print("restore model from:")
             print(model_path + "/" + restore_model)
