@@ -93,6 +93,7 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
     net = nn.DataParallel(net)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net.to(device)
+
     # --- Step 4: Setup Mlflow tracking ---
     mlflow.set_tracking_uri("file:/opt/ml/code/mlruns")
     mlflow.set_experiment("DIS")
@@ -141,7 +142,19 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
         valid_out_dir = "/opt/ml/code/"
 
         # rebuild model for validation
-        print('===== Rebuild model for validation =====')
+        print("--- rebuild model for validation ---")
+#         model = ISNetDIS()
+
+#         # convert to half precision
+#         if (model_digit == "half"):
+#             model.half()
+#             for layer in model.modules():
+#                 if isinstance(layer, nn.BatchNorm2d):
+#                     layer.float()
+
+        # if torch.cuda.is_available():
+        #     net.cuda()
+
         if (restore_model != ""):
             print("restore model from:")
             print(model_path + "/" + restore_model)
@@ -168,8 +181,9 @@ def main(s3_bucket, s3_train_data, s3_logs_path, s3_tensorboard_path, s3_model_p
                         s3_tensorboard_path)
     shutil.rmtree(os.path.join("/opt/ml/code/", 'tensorboard'))
     upload_folder_to_s3("/opt/ml/code/mlruns", s3_bucket, "mlruns")
-    shutil.rmtree("/opt/ml/code/VAL-DATA")
     shutil.rmtree("/opt/ml/code/mlruns")
+    # upload_folder_to_s3("/opt/ml/code/VAL-DATA", s3_bucket, "val")
+    shutil.rmtree("/opt/ml/code/VAL-DATA")
 
 
 if __name__ == "__main__":
