@@ -223,17 +223,41 @@ def upload_folder_to_s3(local_folder_path, s3_bucket_name, s3_folder_path):
             s3_key = os.path.join(s3_folder_path, relative_path).replace("\\", "/")
             s3.upload_file(local_file_path, s3_bucket_name, s3_key)
 
+def download_folder_from_s3(bucket_name, s3_folder, local_folder):
+    s3_client = boto3.client('s3')
+
+    # Create the local folder if it doesn't exist
+    os.makedirs(local_folder, exist_ok=True)
+
+    # List objects in the S3 folder recursively
+    paginator = s3_client.get_paginator('list_objects_v2')
+    operation_parameters = {'Bucket': bucket_name, 'Prefix': s3_folder}
+    page_iterator = paginator.paginate(**operation_parameters)
+
+    for page in page_iterator:
+        if 'Contents' in page:
+            for obj in page ['Contents']:
+                # Construct the local file path
+                local_file_path = os.path.join(local_folder, os.path.relpath(obj ['Key'], s3_folder))
+
+                # Create any necessary local directories
+                os.makedirs(os.path.dirname(local_file_path), exist_ok=True)
+
+                # Download the object
+                s3_client.download_file(bucket_name, obj ['Key'], local_file_path)
 
 if __name__ == "__main__":
     # set up required inputs
     raw_data_path = os.path.join(os.getcwd(), "raw_data.csv")  # your raw CSV data path
     s3_bucket = 'dis-sagemaker'  # Your S3 bucket where data will be uploaded
-    s3_data_prefix = 'fast-flow/data'  # Your S3 data path
+    s3_data_prefix = 'fast-flow/data_test'  # Your S3 data path
 
     # prepare and download data
-    data_prep(raw_data_path)
+    # data_prep(raw_data_path)
 
     # upload data to S3 bucket
     local_path = os.path.join(os.getcwd(), "data")
-    upload_folder_to_s3(local_path, s3_bucket, s3_data_prefix)
+    # upload_folder_to_s3(local_path, s3_bucket, s3_data_prefix)
 
+    # download data from S3
+    download_folder_from_s3(s3_bucket, s3_data_prefix, local_path)
